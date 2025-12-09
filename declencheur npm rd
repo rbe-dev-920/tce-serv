@@ -1,0 +1,17 @@
+cd "C:\Dev\WBMTC_INTRANET_GENERAL\wbm-transports\frontend"
+npm run dev
+
+cd "C:\Dev\WBMTC_INTRANET_GENERAL\wbm-transports\backend"
+npm run dev
+
+--DECLENCHEUR DE PUSH--
+
+cd C:\Dev\WBMTC_INTRANET_GENERAL\wbm-transports\frontend
+git add .
+git commit -m "mise à jour"
+git push origin main
+
+cd C:\Dev\WBMTC_INTRANET_GENERAL\wbm-transports\backend
+git add .
+git commit -m "mise à jour"
+git push origin main
