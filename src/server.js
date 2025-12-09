@@ -17,23 +17,27 @@ const corsOptions = {
       'http://localhost:5173',
       'http://localhost:3000',
       'http://localhost:5000',
+      'http://localhost:8081',
       'https://www.tce-interne.fr',
       'https://tce-interne.fr',
       'https://tce-interne.vercel.app',
+      'https://tce-serv-rbe-serveurs.up.railway.app',
     ];
     
     // En développement ou si origin non spécifié ou si dans la whitelist
     if (!isProduction || !origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      // Log pour debug en production
       console.warn(`[CORS] Requête bloquée depuis: ${origin}`);
-      callback(null, true); // Permettre quand même en production pour éviter les erreurs
+      callback(null, true); // Permettre quand même pour éviter les blocages
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200,
+  maxAge: 86400, // Cache CORS pendant 24h
 };
 
 app.use(cors(corsOptions));
@@ -77,6 +81,23 @@ function getTodayDateParis() {
 
 // ---------- ping ----------
 app.get('/', (_req, res) => res.send('TC Outil API - Voyages TC Essonnes'));
+
+// Health check endpoint
+app.get('/health', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ 
+      status: 'ok', 
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV 
+    });
+  } catch (error) {
+    res.status(503).json({ 
+      status: 'error', 
+      error: error.message 
+    });
+  }
+});
 
 // ---------- cors-test ----------
 app.get('/api/cors-test', (req, res) => {
