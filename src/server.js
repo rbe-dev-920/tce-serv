@@ -78,6 +78,17 @@ function getTodayDateParis() {
 // ---------- ping ----------
 app.get('/', (_req, res) => res.send('TC Outil API - Voyages TC Essonnes'));
 
+// ---------- cors-test ----------
+app.get('/api/cors-test', (req, res) => {
+  res.json({
+    message: 'CORS test successful',
+    origin: req.get('origin'),
+    headers: {
+      'Access-Control-Allow-Origin': res.get('Access-Control-Allow-Origin'),
+    },
+  });
+});
+
 // ---------- server-time ----------
 app.get('/api/server-time', (_req, res) => {
   res.json({ timestamp: new Date().toISOString() });
