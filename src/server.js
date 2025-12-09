@@ -1369,4 +1369,23 @@ app.delete('/api/arrets/:id', async (req, res) => {
 
 // ---------- start ----------
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`TC Outil - API running on http://localhost:${PORT}`));
+
+// Vérifier la connexion à la base de données avant de démarrer
+async function startServer() {
+  try {
+    // Test de connexion à Prisma
+    await prisma.$queryRaw`SELECT 1`;
+    console.log('✅ Database connection successful');
+  } catch (error) {
+    console.error('❌ Database connection failed:', error.message);
+    console.error('DATABASE_URL:', process.env.DATABASE_URL ? 'Configured' : 'NOT SET');
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`🚀 TC Outil - API running on http://localhost:${PORT}`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
+
+startServer();
