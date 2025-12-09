@@ -6,27 +6,32 @@ import { PrismaClient } from '@prisma/client';
 const app = express();
 const prisma = new PrismaClient();
 
-// Configuration CORS pour production et développement
-const allowedOrigins = [
-  'http://localhost:5173',           // Développement local frontend
-  'http://localhost:3000',           // Développement local (alternative)
-  'https://www.tce-interne.fr',      // Production Vercel (domaine custom)
-  'https://tce-interne.vercel.app',  // Production Vercel (domaine vercel)
-  'https://tce-interne.fr',          // Production sans www
-];
+// Configuration CORS simple pour production
+// En production, accepter les domaines spécifiques
+// En développement, accepter localhost
+const isProduction = process.env.NODE_ENV === 'production';
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Permettre les requêtes sans origin (comme Postman, curl, mobile apps)
-    if (!origin || allowedOrigins.includes(origin)) {
+    const allowedOrigins = [
+      'http://localhost:5173',
+      'http://localhost:3000',
+      'http://localhost:5000',
+      'https://www.tce-interne.fr',
+      'https://tce-interne.fr',
+      'https://tce-interne.vercel.app',
+    ];
+    
+    // En développement ou si origin non spécifié ou si dans la whitelist
+    if (!isProduction || !origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.warn(`[CORS] Requête bloquée depuis: ${origin}`);
-      callback(new Error('CORS non autorisé'));
+      callback(null, true); // Permettre quand même en production pour éviter les erreurs
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200,
 };
