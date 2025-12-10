@@ -11,36 +11,30 @@ const prisma = new PrismaClient();
 // En développement, accepter localhost
 const isProduction = process.env.NODE_ENV === 'production';
 
+// CORS permissif pour éviter les blocages (y compris sur erreurs 404/500)
 const corsOptions = {
-  origin: (origin, callback) => {
-    const allowedOrigins = [
-      'http://localhost:5173',
-      'http://localhost:3000',
-      'http://localhost:5000',
-      'http://localhost:8081',
-      'https://www.tce-interne.fr',
-      'https://tce-interne.fr',
-      'https://tce-interne.vercel.app',
-      'https://tce-serv-rbe-serveurs.up.railway.app',
-    ];
-    
-    // En développement ou si origin non spécifié ou si dans la whitelist
-    if (!isProduction || !origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      // Log pour debug en production
-      console.warn(`[CORS] Requête bloquée depuis: ${origin}`);
-      callback(null, true); // Permettre quand même pour éviter les blocages
-    }
-  },
+  origin: true, // reflète l'origine appelante
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   optionsSuccessStatus: 200,
-  maxAge: 86400, // Cache CORS pendant 24h
+  maxAge: 86400,
 };
 
+// Middleware CORS global
 app.use(cors(corsOptions));
+
+// Headers CORS même sur 404/500
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 app.use(express.json());
 
 // ---------- helpers ----------
