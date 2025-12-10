@@ -4,8 +4,8 @@
   "description": "Backend API pour TC Outil - Voyages TC Essonnes",
   "main": "src/server.js",
   "scripts": {
-    "start": "node start.js",
-    "start:api": "node api-server.js",
+    "start": "node http-server.js",
+    "start:api": "node http-server.js",
     "start:full": "node src/server.js",
     "dev": "nodemon src/server.js",
     "prisma": "prisma",
