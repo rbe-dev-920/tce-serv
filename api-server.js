@@ -24,19 +24,19 @@ app.get('/api/today', (req, res) => {
 
 // Mock endpoints pour développement
 app.get('/api/services', (req, res) => {
-  res.json({ services: [], total: 0 });
+  res.json([]);
 });
 
 app.get('/api/lignes', (req, res) => {
-  res.json({ lignes: [], total: 0 });
+  res.json([]);
 });
 
 app.get('/api/conducteurs', (req, res) => {
-  res.json({ conducteurs: [], total: 0 });
+  res.json([]);
 });
 
 app.get('/api/vehicles', (req, res) => {
-  res.json({ vehicles: [], total: 0 });
+  res.json([]);
 });
 
 app.listen(PORT, () => {
