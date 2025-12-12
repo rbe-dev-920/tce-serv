@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "prisma migrate deploy --skip-generate || true ; node src/server.js",
+    "start": "node migrate.js && node src/server.js",
     "start:api": "node src/server.js",
     "start:full": "node src/server.js",
     "dev": "node src/server.js",
