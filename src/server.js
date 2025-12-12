@@ -339,11 +339,17 @@ app.delete('/api/vehicles/:parc', async (req, res) => {
 // LIST
 app.get('/api/conducteurs', async (_req, res) => {
   try {
+    console.log('[API] GET /api/conducteurs - prismaReady:', prismaReady);
+    if (!prismaReady) {
+      return res.status(503).json({ error: 'Database not ready' });
+    }
     const conducteurs = await prisma.conducteur.findMany({ orderBy: { nom: 'asc' } });
+    console.log('[API] GET /api/conducteurs - found:', conducteurs.length);
     res.json(conducteurs);
   } catch (e) {
-    console.error('GET /api/conducteurs ERROR ->', e);
-    res.status(400).json({ error: String(e) });
+    console.error('GET /api/conducteurs ERROR ->', e.message);
+    console.error('Stack:', e.stack);
+    res.status(400).json({ error: String(e.message) });
   }
 });
 
@@ -617,6 +623,10 @@ app.delete('/api/lignes/:id', async (req, res) => {
 // LIST (avec filtrage optionnel par date et conducteur)
 app.get('/api/services', async (req, res) => {
   try {
+    console.log('[API] GET /api/services - prismaReady:', prismaReady);
+    if (!prismaReady) {
+      return res.status(503).json({ error: 'Database not ready' });
+    }
     const { ligneId, conducteurId, date } = req.query;
     const where = {};
     if (ligneId) where.ligneId = ligneId;
@@ -633,10 +643,12 @@ app.get('/api/services', async (req, res) => {
       include: { ligne: true, conducteur: true },
       orderBy: { date: 'asc' },
     });
+    console.log('[API] GET /api/services - found:', services.length);
     res.json(services);
   } catch (e) {
-    console.error('GET /api/services ERROR ->', e);
-    res.status(400).json({ error: String(e) });
+    console.error('GET /api/services ERROR ->', e.message);
+    console.error('Stack:', e.stack);
+    res.status(400).json({ error: String(e.message) });
   }
 });
 
@@ -1450,6 +1462,38 @@ app.delete('/api/arrets/:id', async (req, res) => {
     console.error('DELETE /api/arrets/:id ERROR ->', e);
     res.status(400).json({ error: String(e) });
   }
+});
+
+// ---------- error handler (global) ----------
+app.use((err, req, res, next) => {
+  console.error('[ERROR] Unhandled error:', err.message);
+  console.error('[ERROR] Stack:', err.stack);
+  
+  // Assurer les headers CORS même sur erreur
+  const origin = req.headers.origin;
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  res.status(500).json({
+    error: 'Internal server error',
+    message: err.message,
+  });
+});
+
+// ---------- 404 handler ----------
+app.use((req, res) => {
+  const origin = req.headers.origin;
+  res.header('Access-Control-Allow-Origin', origin || '*');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS,PATCH,HEAD');
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization,X-Requested-With');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  
+  res.status(404).json({
+    error: 'Not found',
+    path: req.path,
+  });
 });
 
 // ---------- start ----------
