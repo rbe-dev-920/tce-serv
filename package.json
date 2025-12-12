@@ -5,9 +5,9 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "prisma db push && node src/server.js",
-    "start:api": "prisma db push && node src/server.js",
-    "start:full": "prisma db push && node src/server.js",
+    "start": "node src/server.js",
+    "start:api": "node src/server.js",
+    "start:full": "node src/server.js",
     "dev": "node src/server.js",
     "prisma": "prisma",
     "db:generate": "prisma generate",
