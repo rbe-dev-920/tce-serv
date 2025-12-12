@@ -3,14 +3,24 @@ import express from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 
+console.log('[INIT] Starting server initialization...');
+console.log('[INIT] NODE_ENV:', process.env.NODE_ENV);
+console.log('[INIT] PORT:', process.env.PORT);
+console.log('[INIT] DATABASE_URL exists:', !!process.env.DATABASE_URL);
+
 const app = express();
 let prisma; // init guarded to avoid startup crash when DB is unreachable
 let prismaReady = false;
 
+console.log('[INIT] Creating PrismaClient...');
 try {
-  prisma = new PrismaClient();
+  prisma = new PrismaClient({
+    log: ['error', 'warn'],
+  });
+  console.log('[INIT] ✅ PrismaClient created');
 } catch (e) {
-  console.error('Prisma initialization failed ->', e.message);
+  console.error('[INIT] ❌ Prisma initialization failed ->', e.message);
+  console.error('[INIT] Stack:', e.stack);
 }
 
 // Configuration CORS simple pour production
@@ -1439,12 +1449,16 @@ app.delete('/api/arrets/:id', async (req, res) => {
 const PORT = process.env.PORT || 8081;
 const HOST = '0.0.0.0';
 
+console.log('[STARTUP] Configured PORT:', PORT);
+console.log('[STARTUP] Configured HOST:', HOST);
+
 // Vérifier la connexion à la base de données avant de démarrer
 async function startServer() {
+  console.log('[STARTUP] startServer() called');
   try {
     // Test de connexion à Prisma avec timeout
     console.log('[STARTUP] Testing database connection...');
-    console.log('[STARTUP] DATABASE_URL:', process.env.DATABASE_URL ? 'Configured' : 'NOT SET');
+    console.log('[STARTUP] DATABASE_URL:', process.env.DATABASE_URL ? 'SET' : 'NOT SET');
 
     if (!prisma) {
       throw new Error('Prisma client not initialized');
@@ -1469,6 +1483,7 @@ async function startServer() {
     console.warn('⚠️  Starting server without database connection...');
   }
 
+  console.log('[STARTUP] About to create HTTP server on', HOST + ':' + PORT);
   const server = app.listen(PORT, HOST, () => {
     console.log(`🚀 TC Outil - API running on http://${HOST}:${PORT}`);
     console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -1486,6 +1501,7 @@ async function startServer() {
   });
 }
 
+console.log('[STARTUP] Calling startServer()...');
 startServer().catch(error => {
   console.error('Failed to start server:', error);
   process.exit(1);
