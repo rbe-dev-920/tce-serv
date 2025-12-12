@@ -1524,6 +1524,26 @@ async function startServer() {
     prismaReady = true;
     
     console.log(`✅ Database connection successful (${duration}ms)`);
+    
+    // Créer les tables si elles n'existent pas
+    console.log('[STARTUP] Ensuring database schema...');
+    try {
+      await prisma.$executeRawUnsafe('SELECT 1 FROM "Vehicle" LIMIT 1');
+      console.log('[STARTUP] ✅ Tables already exist');
+    } catch (e) {
+      console.log('[STARTUP] Tables not found, running db push...');
+      try {
+        const { execSync } = await import('child_process');
+        execSync('prisma db push --skip-generate --skip-validate --accept-data-loss', {
+          cwd: process.cwd(),
+          stdio: 'inherit',
+          env: { ...process.env },
+        });
+        console.log('[STARTUP] ✅ Schema pushed successfully');
+      } catch (pushError) {
+        console.warn('[STARTUP] ⚠️  db push failed:', pushError.message);
+      }
+    }
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);
     console.error('[ERROR] Stack:', error.stack);
