@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node -e \"require('child_process').exec('prisma db push --skip-generate', (e) => { if (e) console.warn('Prisma migration warning:', e.message); require('./src/server.js'); })\" || node src/server.js",
     "start:api": "node src/server.js",
     "start:full": "node src/server.js",
     "dev": "node src/server.js",
