@@ -60,6 +60,35 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json());
+app.use(express.text()); // Pour traiter les fichiers en texte brut
+
+// Middleware custom pour multipart/form-data (fichiers)
+app.use((req, res, next) => {
+  if (req.headers['content-type']?.includes('multipart/form-data')) {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    req.on('end', () => {
+      // Parser simple du multipart
+      const boundary = req.headers['content-type'].split('boundary=')[1];
+      const parts = body.split(`--${boundary}`);
+      
+      for (const part of parts) {
+        if (part.includes('filename=')) {
+          const match = part.match(/\r\n\r\n([\s\S]*?)\r\n/);
+          if (match) {
+            req.csvContent = match[1];
+            break;
+          }
+        }
+      }
+      next();
+    });
+  } else {
+    next();
+  }
+});
 
 // Short-circuit requests that need DB when Prisma is not ready
 const noDbPaths = new Set([
@@ -1474,6 +1503,167 @@ app.delete('/api/arrets/:id', async (req, res) => {
     res.status(400).json({ error: String(e) });
   }
 });
+
+// ---------- CSV Import Endpoints ----------
+
+// Helper: Parse CSV simple (pas de dépendance externe)
+function parseCSV(csvText) {
+  const lines = csvText.trim().split('\n');
+  if (lines.length < 2) throw new Error('CSV vide ou invalide');
+
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    
+    const values = lines[i].split(',').map(v => v.trim());
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = values[index] || '';
+    });
+    rows.push(row);
+  }
+
+  return { headers, rows };
+}
+
+// Helper: Parse jours "L; M; M; J; V; S; D" en objet calendrier
+function parseJours(joursStr) {
+  if (!joursStr) return null;
+  
+  const jours = joursStr.split(';').map(j => j.trim().toUpperCase());
+  const mapping = {
+    'L': 'lundi',
+    'M': 'mardi',
+    'J': 'jeudi',
+    'V': 'vendredi',
+    'S': 'samedi',
+    'D': 'dimanche'
+  };
+
+  const calendrier = {
+    lundi: false,
+    mardi: false,
+    mercredi: false,
+    jeudi: false,
+    vendredi: false,
+    samedi: false,
+    dimanche: false
+  };
+
+  // Compter les "M" pour identifier mardi et mercredi
+  let mCount = 0;
+  jours.forEach(j => {
+    if (j === 'L') calendrier.lundi = true;
+    else if (j === 'M') {
+      mCount++;
+      if (mCount === 1) calendrier.mardi = true;
+      else if (mCount === 2) calendrier.mercredi = true;
+    }
+    else if (j === 'J') calendrier.jeudi = true;
+    else if (j === 'V') calendrier.vendredi = true;
+    else if (j === 'S') calendrier.samedi = true;
+    else if (j === 'D') calendrier.dimanche = true;
+  });
+
+  return calendrier;
+}
+
+// Helper: Parse heures "04h37" -> "04:37"
+function parseHeure(heureStr) {
+  if (!heureStr) return null;
+  return heureStr.replace('h', ':');
+}
+
+// POST /api/import/lignes - Import CSV de lignes
+app.post('/api/import/lignes', async (req, res) => {
+  try {
+    console.log('[IMPORT] POST /api/import/lignes');
+
+    if (!prismaReady) {
+      return res.status(503).json({ error: 'Database not ready' });
+    }
+
+    let csvText = req.csvContent || req.body || '';
+
+    if (!csvText) {
+      return res.status(400).json({ error: 'Aucun fichier CSV fourni' });
+    }
+
+    await processImportLignes(csvText, res);
+  } catch (error) {
+    console.error('[IMPORT] POST /api/import/lignes ERROR ->', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper: Traiter l'import des lignes
+async function processImportLignes(csvText, res) {
+  const { headers, rows } = parseCSV(csvText);
+
+  // Valider les colonnes requises
+  const requiredColumns = ['numéro de ligne', 'nom de la ligne', 'jours de fonctionnement', 'type', 'premier départ', 'dernier arrivé au dépôt'];
+  const missingColumns = requiredColumns.filter(col => !headers.includes(col.toLowerCase()));
+
+  if (missingColumns.length > 0) {
+    throw new Error(`Colonnes manquantes: ${missingColumns.join(', ')}`);
+  }
+
+  let imported = 0;
+  const errors = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    try {
+      const row = rows[i];
+      const numero = row['numéro de ligne']?.trim();
+      const nom = row['nom de la ligne']?.trim();
+      const joursStr = row['jours de fonctionnement']?.trim();
+      const type = row['type']?.trim();
+      const heureDebut = parseHeure(row['premier départ']?.trim());
+      const heureFin = parseHeure(row['dernier arrivé au dépôt']?.trim());
+
+      if (!numero || !nom) {
+        errors.push(`Ligne ${i + 2}: numéro et nom requis`);
+        continue;
+      }
+
+      const calendrier = parseJours(joursStr);
+
+      // Créer ou mettre à jour la ligne
+      await prisma.ligne.upsert({
+        where: { numero },
+        create: {
+          numero,
+          nom,
+          typesVehicules: JSON.stringify([type || 'Autobus']),
+          heureDebut,
+          heureFin,
+          calendrierJson: JSON.stringify(calendrier),
+          statut: 'Actif',
+        },
+        update: {
+          nom,
+          typesVehicules: JSON.stringify([type || 'Autobus']),
+          heureDebut,
+          heureFin,
+          calendrierJson: JSON.stringify(calendrier),
+          statut: 'Actif',
+        },
+      });
+
+      imported++;
+    } catch (error) {
+      errors.push(`Ligne ${i + 2}: ${error.message}`);
+    }
+  }
+
+  res.json({
+    imported,
+    errors: errors.length > 0 ? errors : undefined,
+    message: `${imported}/${rows.length} ligne(s) importée(s)`,
+  });
+}
 
 // ---------- error handler (global) ----------
 app.use((err, req, res, next) => {
