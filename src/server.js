@@ -1692,27 +1692,39 @@ async function processImportLignes(csvText, res) {
 
       const calendrier = parseJours(joursStr);
 
-      // Créer/mettre à jour la ligne
-      const ligne = await prisma.ligne.upsert({
+      // Chercher si la ligne existe
+      let ligne = await prisma.ligne.findUnique({
         where: { numero },
-        create: {
-          numero,
-          nom,
-          typesVehicules: JSON.stringify(type ? [type] : ['Standard']),
-          heureDebut,
-          heureFin,
-          calendrierJson: JSON.stringify(calendrier),
-          statut: 'Actif',
-        },
-        update: {
-          nom,
-          typesVehicules: JSON.stringify(type ? [type] : ['Standard']),
-          heureDebut,
-          heureFin,
-          calendrierJson: JSON.stringify(calendrier),
-          statut: 'Actif',
-        },
+        include: { sens: true }
       });
+
+      // Si la ligne n'existe pas, la créer
+      if (!ligne) {
+        ligne = await prisma.ligne.create({
+          data: {
+            numero,
+            nom,
+            typesVehicules: JSON.stringify(type ? [type] : ['Standard']),
+            heureDebut,
+            heureFin,
+            calendrierJson: JSON.stringify(calendrier),
+            statut: 'Actif',
+          },
+          include: { sens: true }
+        });
+      } else {
+        // La ligne existe déjà : on ne met à jour que les infos essentielles si elle était vide
+        if (!ligne.nom || ligne.nom === '') {
+          ligne = await prisma.ligne.update({
+            where: { numero },
+            data: {
+              nom,
+              statut: 'Actif',
+            },
+            include: { sens: true }
+          });
+        }
+      }
 
       // Créer/mettre à jour le sens
       let sens = null;
