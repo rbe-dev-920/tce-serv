@@ -1610,11 +1610,13 @@ async function processImportLignes(csvText, res) {
     throw new Error(`Colonnes manquantes: ${missingColumns.join(', ')}`);
   }
 
-  // Détecter les colonnes optionnelles pour les sens
-  const sensColumns = headers.filter(h => h.toLowerCase().startsWith('sens'));
-
   let imported = 0;
   const errors = [];
+  const lignesCreated = new Map(); // Tracker les lignes créées pour éviter les doublons
+
+  // Obtenir la date d'aujourd'hui pour les services
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   for (let i = 0; i < rows.length; i++) {
     try {
@@ -1625,6 +1627,8 @@ async function processImportLignes(csvText, res) {
       const type = row['type']?.trim();
       const heureDebut = parseHeure(row['premier départ']?.trim());
       const heureFin = parseHeure(row['dernier arrivé au dépôt']?.trim());
+      const sensNom = row['sens']?.trim();
+      const sensDirection = row['direction']?.trim();
 
       if (!numero || !nom) {
         errors.push(`Ligne ${i + 2}: numéro et nom requis`);
@@ -1633,59 +1637,115 @@ async function processImportLignes(csvText, res) {
 
       const calendrier = parseJours(joursStr);
 
-      // Créer ou mettre à jour la ligne
-      const ligne = await prisma.ligne.upsert({
-        where: { numero },
-        create: {
-          numero,
-          nom,
-          typesVehicules: JSON.stringify([type || 'Autobus']),
-          heureDebut,
-          heureFin,
-          calendrierJson: JSON.stringify(calendrier),
-          statut: 'Actif',
-        },
-        update: {
-          nom,
-          typesVehicules: JSON.stringify([type || 'Autobus']),
-          heureDebut,
-          heureFin,
-          calendrierJson: JSON.stringify(calendrier),
-          statut: 'Actif',
-        },
-      });
+      // Créer ou récupérer la ligne
+      let ligne;
+      if (!lignesCreated.has(numero)) {
+        ligne = await prisma.ligne.upsert({
+          where: { numero },
+          create: {
+            numero,
+            nom,
+            typesVehicules: JSON.stringify([type || 'Autobus']),
+            heureDebut,
+            heureFin,
+            calendrierJson: JSON.stringify(calendrier),
+            statut: 'Actif',
+          },
+          update: {
+            nom,
+            typesVehicules: JSON.stringify([type || 'Autobus']),
+            heureDebut,
+            heureFin,
+            calendrierJson: JSON.stringify(calendrier),
+            statut: 'Actif',
+          },
+        });
+        lignesCreated.set(numero, ligne);
+      } else {
+        ligne = lignesCreated.get(numero);
+      }
 
-      // Traiter les sens si présents dans le CSV
-      if (sensColumns.length > 0) {
-        // Récupérer les sens existants
-        const senExistants = await prisma.sens.findMany({ where: { ligneId: ligne.id } });
-        const sensExistantsMap = new Map(senExistants.map(s => [s.nom, s]));
+      // Créer ou récupérer le sens si spécifié
+      let sens = null;
+      if (sensNom) {
+        sens = await prisma.sens.upsert({
+          where: {
+            ligneId_nom: {
+              ligneId: ligne.id,
+              nom: sensNom,
+            },
+          },
+          create: {
+            ligneId: ligne.id,
+            nom: sensNom,
+            direction: sensDirection || null,
+            statut: 'Actif',
+          },
+          update: {
+            direction: sensDirection || null,
+          },
+        });
+      }
 
-        // Collecter les nouveaux sens du CSV
-        const nouveauxSens = [];
-        for (let j = 1; j <= 10; j++) { // Support jusqu'à 10 sens
-          const sensKey = `sens ${j}`.toLowerCase();
-          const directionKey = `direction ${j}`.toLowerCase();
+      // Créer les services si présents dans le CSV
+      // Détecte les colonnes "Service X Début" et "Service X Fin"
+      for (let j = 1; j <= 20; j++) { // Support jusqu'à 20 services
+        const serviceBeginKey = `service ${j} début`.toLowerCase();
+        const serviceEndKey = `service ${j} fin`.toLowerCase();
 
-          const sensNom = row[sensKey]?.trim();
-          const sensDirection = row[directionKey]?.trim();
+        const serviceBegin = row[serviceBeginKey]?.trim();
+        const serviceEnd = row[serviceEndKey]?.trim();
 
-          if (sensNom) {
-            nouveauxSens.push({ nom: sensNom, direction: sensDirection || null });
-          }
-        }
+        if (serviceBegin && serviceEnd) {
+          const heureDebuitService = parseHeure(serviceBegin);
+          const heureFinService = parseHeure(serviceEnd);
 
-        // Créer les nouveaux sens
-        for (const senData of nouveauxSens) {
-          if (!sensExistantsMap.has(senData.nom)) {
-            await prisma.sens.create({
-              data: {
-                ligneId: ligne.id,
-                nom: senData.nom,
-                direction: senData.direction,
-                statut: 'Actif',
-              },
-            });
+          if (heureDebuitService && heureFinService) {
+            // Créer le service pour chaque jour de fonctionnement
+            const joursActive = Object.keys(calendrier).filter(jour => calendrier[jour]);
+
+            for (const jour of joursActive) {
+              // Déterminer la date pour ce jour
+              const serviceDate = new Date(today);
+              const dayMap = {
+                'lundi': 1,
+                'mardi': 2,
+                'mercredi': 3,
+                'jeudi': 4,
+                'vendredi': 5,
+                'samedi': 6,
+                'dimanche': 0,
+              };
+
+              const targetDay = dayMap[jour];
+              const currentDay = serviceDate.getDay();
+              let daysToAdd = targetDay - currentDay;
+              if (daysToAdd < 0) daysToAdd += 7;
+
+              serviceDate.setDate(serviceDate.getDate() + daysToAdd);
+
+              // Créer ou mettre à jour le service
+              await prisma.service.upsert({
+                where: {
+                  id: `${ligne.id}-${sens?.id || 'no-sens'}-${jour}-${heureDebuitService}`,
+                },
+                create: {
+                  ligneId: ligne.id,
+                  sensId: sens?.id || null,
+                  date: serviceDate,
+                  heureDebut: heureDebuitService,
+                  heureFin: heureFinService,
+                  statut: 'Planifiée',
+                },
+                update: {
+                  heureDebut: heureDebuitService,
+                  heureFin: heureFinService,
+                  statut: 'Planifiée',
+                },
+              }).catch(() => {
+                // Ignorer les erreurs d'upsert si l'ID existe déjà
+              });
+            }
           }
         }
       }
@@ -1699,7 +1759,7 @@ async function processImportLignes(csvText, res) {
   res.json({
     imported,
     errors: errors.length > 0 ? errors : undefined,
-    message: `${imported}/${rows.length} ligne(s) importée(s)`,
+    message: `${imported}/${rows.length} ligne(s) et services importée(s)`,
   });
 }
 
