@@ -1511,6 +1511,38 @@ function parseCSV(csvText) {
   const lines = csvText.trim().split('\n');
   if (lines.length < 2) throw new Error('CSV vide ou invalide');
 
+  // Détecter les sections [LIGNES], [ARRETS], etc.
+  const sections = {};
+  let currentSection = 'LIGNES'; // Section par défaut
+  let currentLines = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    // Vérifier si c'est une entête de section
+    if (line.startsWith('[') && line.endsWith(']')) {
+      // Sauvegarder la section précédente
+      if (currentLines.length > 0) {
+        sections[currentSection] = parseCSVLines(currentLines);
+      }
+      currentSection = line.slice(1, -1); // Retirer [ et ]
+      currentLines = [];
+    } else if (line) {
+      currentLines.push(line);
+    }
+  }
+
+  // Sauvegarder la dernière section
+  if (currentLines.length > 0) {
+    sections[currentSection] = parseCSVLines(currentLines);
+  }
+
+  return sections;
+}
+
+function parseCSVLines(lines) {
+  if (lines.length < 1) return { headers: [], rows: [] };
+
   const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
   const rows = [];
 
@@ -1600,27 +1632,30 @@ app.post('/api/import/lignes', async (req, res) => {
 
 // Helper: Traiter l'import des lignes
 async function processImportLignes(csvText, res) {
-  const { headers, rows } = parseCSV(csvText);
+  const sections = parseCSV(csvText);
 
-  // Valider les colonnes requises
+  // Parser les sections
+  const lignesData = sections['LIGNES'] || { headers: [], rows: [] };
+  const arretsData = sections['ARRETS'] || { headers: [], rows: [] };
+
+  // Valider les colonnes requises pour les lignes
   const requiredColumns = ['numéro de ligne', 'nom de la ligne', 'jours de fonctionnement', 'type', 'premier départ', 'dernier arrivé au dépôt'];
-  const missingColumns = requiredColumns.filter(col => !headers.includes(col.toLowerCase()));
+  const missingColumns = requiredColumns.filter(col => !lignesData.headers.includes(col.toLowerCase()));
 
   if (missingColumns.length > 0) {
-    throw new Error(`Colonnes manquantes: ${missingColumns.join(', ')}`);
+    throw new Error(`Colonnes manquantes dans [LIGNES]: ${missingColumns.join(', ')}`);
   }
 
   let imported = 0;
   const errors = [];
-  const lignesCreated = new Map(); // Tracker les lignes créées pour éviter les doublons
-
-  // Obtenir la date d'aujourd'hui pour les services
+  const trajetsMap = new Map(); // Tracker: trajet -> Prisma object
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  for (let i = 0; i < rows.length; i++) {
+  // ============ PHASE 1: Importer les lignes, sens, trajets et services ============
+  for (let i = 0; i < lignesData.rows.length; i++) {
     try {
-      const row = rows[i];
+      const row = lignesData.rows[i];
       const numero = row['numéro de ligne']?.trim();
       const nom = row['nom de la ligne']?.trim();
       const joursStr = row['jours de fonctionnement']?.trim();
@@ -1629,43 +1664,39 @@ async function processImportLignes(csvText, res) {
       const heureFin = parseHeure(row['dernier arrivé au dépôt']?.trim());
       const sensNom = row['sens']?.trim();
       const sensDirection = row['direction']?.trim();
+      const trajetNom = row['trajet']?.trim();
+      const trajetDescription = row['description trajet']?.trim();
 
       if (!numero || !nom) {
-        errors.push(`Ligne ${i + 2}: numéro et nom requis`);
+        errors.push(`Ligne [LIGNES] ${i + 2}: numéro et nom requis`);
         continue;
       }
 
       const calendrier = parseJours(joursStr);
 
-      // Créer ou récupérer la ligne
-      let ligne;
-      if (!lignesCreated.has(numero)) {
-        ligne = await prisma.ligne.upsert({
-          where: { numero },
-          create: {
-            numero,
-            nom,
-            typesVehicules: JSON.stringify([type || 'Autobus']),
-            heureDebut,
-            heureFin,
-            calendrierJson: JSON.stringify(calendrier),
-            statut: 'Actif',
-          },
-          update: {
-            nom,
-            typesVehicules: JSON.stringify([type || 'Autobus']),
-            heureDebut,
-            heureFin,
-            calendrierJson: JSON.stringify(calendrier),
-            statut: 'Actif',
-          },
-        });
-        lignesCreated.set(numero, ligne);
-      } else {
-        ligne = lignesCreated.get(numero);
-      }
+      // Créer/mettre à jour la ligne
+      const ligne = await prisma.ligne.upsert({
+        where: { numero },
+        create: {
+          numero,
+          nom,
+          typesVehicules: JSON.stringify([type || 'Autobus']),
+          heureDebut,
+          heureFin,
+          calendrierJson: JSON.stringify(calendrier),
+          statut: 'Actif',
+        },
+        update: {
+          nom,
+          typesVehicules: JSON.stringify([type || 'Autobus']),
+          heureDebut,
+          heureFin,
+          calendrierJson: JSON.stringify(calendrier),
+          statut: 'Actif',
+        },
+      });
 
-      // Créer ou récupérer le sens si spécifié
+      // Créer/mettre à jour le sens
       let sens = null;
       if (sensNom) {
         sens = await prisma.sens.upsert({
@@ -1687,9 +1718,32 @@ async function processImportLignes(csvText, res) {
         });
       }
 
-      // Créer les services si présents dans le CSV
-      // Détecte les colonnes "Service X Début" et "Service X Fin"
-      for (let j = 1; j <= 20; j++) { // Support jusqu'à 20 services
+      // Créer/mettre à jour le trajet
+      let trajet = null;
+      if (trajetNom && sens) {
+        trajet = await prisma.trajet.upsert({
+          where: {
+            ligneId_nom: {
+              ligneId: ligne.id,
+              nom: trajetNom,
+            },
+          },
+          create: {
+            ligneId: ligne.id,
+            sensId: sens.id,
+            nom: trajetNom,
+            description: trajetDescription || null,
+            statut: 'Actif',
+          },
+          update: {
+            description: trajetDescription || null,
+          },
+        });
+        trajetsMap.set(trajetNom, trajet);
+      }
+
+      // Créer les services
+      for (let j = 1; j <= 20; j++) {
         const serviceBeginKey = `service ${j} début`.toLowerCase();
         const serviceEndKey = `service ${j} fin`.toLowerCase();
 
@@ -1705,16 +1759,10 @@ async function processImportLignes(csvText, res) {
             const joursActive = Object.keys(calendrier).filter(jour => calendrier[jour]);
 
             for (const jour of joursActive) {
-              // Déterminer la date pour ce jour
               const serviceDate = new Date(today);
               const dayMap = {
-                'lundi': 1,
-                'mardi': 2,
-                'mercredi': 3,
-                'jeudi': 4,
-                'vendredi': 5,
-                'samedi': 6,
-                'dimanche': 0,
+                'lundi': 1, 'mardi': 2, 'mercredi': 3, 'jeudi': 4,
+                'vendredi': 5, 'samedi': 6, 'dimanche': 0,
               };
 
               const targetDay = dayMap[jour];
@@ -1724,12 +1772,9 @@ async function processImportLignes(csvText, res) {
 
               serviceDate.setDate(serviceDate.getDate() + daysToAdd);
 
-              // Créer ou mettre à jour le service
-              await prisma.service.upsert({
-                where: {
-                  id: `${ligne.id}-${sens?.id || 'no-sens'}-${jour}-${heureDebuitService}`,
-                },
-                create: {
+              // Créer le service
+              await prisma.service.create({
+                data: {
                   ligneId: ligne.id,
                   sensId: sens?.id || null,
                   date: serviceDate,
@@ -1737,13 +1782,8 @@ async function processImportLignes(csvText, res) {
                   heureFin: heureFinService,
                   statut: 'Planifiée',
                 },
-                update: {
-                  heureDebut: heureDebuitService,
-                  heureFin: heureFinService,
-                  statut: 'Planifiée',
-                },
               }).catch(() => {
-                // Ignorer les erreurs d'upsert si l'ID existe déjà
+                // Ignorer les doublons
               });
             }
           }
@@ -1752,14 +1792,58 @@ async function processImportLignes(csvText, res) {
 
       imported++;
     } catch (error) {
-      errors.push(`Ligne ${i + 2}: ${error.message}`);
+      errors.push(`Ligne [LIGNES] ${i + 2}: ${error.message}`);
+    }
+  }
+
+  // ============ PHASE 2: Importer les arrêts ============
+  for (let i = 0; i < arretsData.rows.length; i++) {
+    try {
+      const row = arretsData.rows[i];
+      const trajetNom = row['trajet']?.trim();
+      const ordre = parseInt(row['ordre']) || 0;
+      const nomArret = row['nom arrêt']?.trim();
+      const temps = parseInt(row['temps depuis arrêt précédent (min)']) || 0;
+
+      if (!trajetNom || !nomArret) {
+        errors.push(`Ligne [ARRETS] ${i + 2}: trajet et nom arrêt requis`);
+        continue;
+      }
+
+      const trajet = trajetsMap.get(trajetNom);
+      if (!trajet) {
+        errors.push(`Ligne [ARRETS] ${i + 2}: trajet "${trajetNom}" non trouvé`);
+        continue;
+      }
+
+      // Créer l'arrêt
+      await prisma.arret.upsert({
+        where: {
+          trajetId_ordre: {
+            trajetId: trajet.id,
+            ordre: ordre,
+          },
+        },
+        create: {
+          trajetId: trajet.id,
+          nom: nomArret,
+          ordre: ordre,
+          tempsArriveeAntecedent: temps,
+        },
+        update: {
+          nom: nomArret,
+          tempsArriveeAntecedent: temps,
+        },
+      });
+    } catch (error) {
+      errors.push(`Ligne [ARRETS] ${i + 2}: ${error.message}`);
     }
   }
 
   res.json({
     imported,
     errors: errors.length > 0 ? errors : undefined,
-    message: `${imported}/${rows.length} ligne(s) et services importée(s)`,
+    message: `${imported} ligne(s) et ${arretsData.rows.length} arrêt(s) importée(s)`,
   });
 }
 
