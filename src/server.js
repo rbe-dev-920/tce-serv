@@ -1610,6 +1610,9 @@ async function processImportLignes(csvText, res) {
     throw new Error(`Colonnes manquantes: ${missingColumns.join(', ')}`);
   }
 
+  // Détecter les colonnes optionnelles pour les sens
+  const sensColumns = headers.filter(h => h.toLowerCase().startsWith('sens'));
+
   let imported = 0;
   const errors = [];
 
@@ -1631,7 +1634,7 @@ async function processImportLignes(csvText, res) {
       const calendrier = parseJours(joursStr);
 
       // Créer ou mettre à jour la ligne
-      await prisma.ligne.upsert({
+      const ligne = await prisma.ligne.upsert({
         where: { numero },
         create: {
           numero,
@@ -1651,6 +1654,41 @@ async function processImportLignes(csvText, res) {
           statut: 'Actif',
         },
       });
+
+      // Traiter les sens si présents dans le CSV
+      if (sensColumns.length > 0) {
+        // Récupérer les sens existants
+        const senExistants = await prisma.sens.findMany({ where: { ligneId: ligne.id } });
+        const sensExistantsMap = new Map(senExistants.map(s => [s.nom, s]));
+
+        // Collecter les nouveaux sens du CSV
+        const nouveauxSens = [];
+        for (let j = 1; j <= 10; j++) { // Support jusqu'à 10 sens
+          const sensKey = `sens ${j}`.toLowerCase();
+          const directionKey = `direction ${j}`.toLowerCase();
+
+          const sensNom = row[sensKey]?.trim();
+          const sensDirection = row[directionKey]?.trim();
+
+          if (sensNom) {
+            nouveauxSens.push({ nom: sensNom, direction: sensDirection || null });
+          }
+        }
+
+        // Créer les nouveaux sens
+        for (const senData of nouveauxSens) {
+          if (!sensExistantsMap.has(senData.nom)) {
+            await prisma.sens.create({
+              data: {
+                ligneId: ligne.id,
+                nom: senData.nom,
+                direction: senData.direction,
+                statut: 'Actif',
+              },
+            });
+          }
+        }
+      }
 
       imported++;
     } catch (error) {
